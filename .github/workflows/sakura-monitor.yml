@@ -26,13 +26,6 @@ jobs:
         pip install --upgrade pip
         pip install requests beautifulsoup4
         
-    - name: Download previous maintenance history
-      uses: actions/download-artifact@v4
-      with:
-        name: maintenance-history
-        path: .
-      continue-on-error: true
-      
     - name: Check maintenance history file
       run: |
         if [ -f maintenance_sent.json ]; then
@@ -50,13 +43,22 @@ jobs:
       run: |
         python sakura_checker.py auto
         
-    - name: Upload maintenance history
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: maintenance-history
-        path: maintenance_sent.json
-        retention-days: 30
+    - name: Commit maintenance history
+      run: |
+        if [ -f maintenance_sent.json ] && [ -s maintenance_sent.json ]; then
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add maintenance_sent.json
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update maintenance history [skip ci]"
+            git push
+            echo "Maintenance history updated"
+          fi
+        else
+          echo "No maintenance history to commit"
+        fi
 
     # - name: Test Slack notification
     #   env:
