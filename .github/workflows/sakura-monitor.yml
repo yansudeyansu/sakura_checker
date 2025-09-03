@@ -1,0 +1,42 @@
+name: Sakura Internet Status Monitor
+
+on:
+  schedule:
+    # 毎時0分に実行（1時間間隔）
+    - cron: '0 * * * *'
+  # 手動実行も可能にする
+  workflow_dispatch:
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install requests beautifulsoup4
+        
+    - name: Run Sakura Monitor
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        AUTO_MODE: '1'
+      run: |
+        python sakura_checer.py auto
+        
+    - name: Upload maintenance history
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: maintenance-history-${{ github.run_number }}
+        path: maintenance_sent.json
+        retention-days: 30
