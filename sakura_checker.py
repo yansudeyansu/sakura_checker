@@ -24,9 +24,15 @@ if os.name == 'nt':
     import ctypes
     ctypes.windll.kernel32.SetConsoleOutputCP(65001)
 
-# Slack Webhook URL（環境変数から取得、フォールバック用にデフォルト値も設定）
+# Slack Webhook URL（環境変数から必須で取得）
 # このURLを使用してSlackチャンネルに通知を送信します
-SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL', "https://hooks.slack.com/services/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")
+# セキュリティ上、GitHub Secretsに設定することが必須です
+SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
+
+if not SLACK_WEBHOOK_URL:
+    print("[エラー] SLACK_WEBHOOK_URL環境変数が設定されていません")
+    print("GitHub Secrets に SLACK_WEBHOOK_URL を設定してください")
+    exit(1)
 
 # メンテナンス通知の重複チェック用ファイル
 # 送信済みのメンテナンス通知のハッシュ値を保存して重複を防ぐ
