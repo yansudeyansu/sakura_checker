@@ -40,11 +40,12 @@ jobs:
         name: maintenance-history-${{ github.run_number }}
         path: maintenance_sent.json
         retention-days: 30
-    - name: Test Slack notification
-      env:
-        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-      run: |
-        echo "Forcing Slack test notification..."
-        python -c "import os, requests; webhook_url=os.environ.get('SLACK_WEBHOOK_URL'); resp=requests.post(webhook_url, json={'text': '✅ GitHub ActionsからのSlack送信テスト成功！'}); print('Status:', resp.status_code, resp.text)"
+
+    # - name: Test Slack notification
+    #   env:
+    #     SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    #   run: |
+    #     echo "Forcing Slack test notification..."
+    #     python -c "import os, requests; webhook_url=os.environ.get('SLACK_WEBHOOK_URL'); resp=requests.post(webhook_url, json={'text': '✅ GitHub ActionsからのSlack送信テスト成功！'}); print('Status:', resp.status_code, resp.text)"
 
 
