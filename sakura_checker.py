@@ -13,7 +13,7 @@
 
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import os
 import json
 import hashlib
@@ -122,8 +122,9 @@ def mark_maintenance_as_sent(service, message):
     current_hash = generate_maintenance_hash(service, message)
     
     # ユニークなキーを作成（サービス名_日時形式）
-    # 例: "レンタルサーバ_20250903_150022"
-    key = f"{service}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # 例: "レンタルサーバ_20250903_180022" (JST)
+    jst = timezone(timedelta(hours=9))
+    key = f"{service}_{datetime.now(jst).strftime('%Y%m%d_%H%M%S')}"
     
     # ハッシュ辞書に新しいエントリを追加
     hashes[key] = current_hash
@@ -195,7 +196,7 @@ def send_slack_notification(service, status, url='https://help.sakura.ad.jp/stat
                     }
                 ],
                 "footer": "さくらインターネット監視bot",  # フッター情報
-                "ts": int(datetime.now().timestamp())  # タイムスタンプ
+                "ts": int(datetime.now(timezone(timedelta(hours=9))).timestamp())  # JST タイムスタンプ
             }
         ]
     }
@@ -232,10 +233,13 @@ def check_sakura_status(send_to_slack=True):
                               True: 通知送信, False: ログ出力のみ
     """
     
-    # 実行開始ログ
+    # 実行開始ログ（日本時間で表示）
+    jst = timezone(timedelta(hours=9))  # 日本標準時（JST = UTC+9）
+    now_jst = datetime.now(jst)
+    
     print("=" * 60)
     print("さくらインターネット ステータス監視")
-    print(f"実行時刻: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"実行時刻: {now_jst.strftime('%Y-%m-%d %H:%M:%S')} JST")
     print("=" * 60)
     
     # さくらインターネットのステータスページURL
