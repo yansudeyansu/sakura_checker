@@ -41,14 +41,14 @@ pip install -r requirements.txt
 #### 実行方法
 ```bash
 # 対話モード
-python sakura_checer.py
+python sakura_checker.py
 
 # 自動実行モード
-python sakura_checer.py auto
+python sakura_checker.py auto
 
 # 環境変数での制御
 export AUTO_MODE=1
-python sakura_checer.py
+python sakura_checker.py
 ```
 
 ## ファイル構成
@@ -58,7 +58,7 @@ SAKURA_info/
 ├── .github/
 │   └── workflows/
 │       └── sakura-monitor.yml     # GitHub Actionsワークフロー
-├── sakura_checer.py               # メインスクリプト
+├── sakura_checker.py              # メインスクリプト
 ├── requirements.txt               # Python依存関係
 ├── maintenance_sent.json          # メンテナンス通知履歴（自動生成）
 └── README.md                      # このファイル

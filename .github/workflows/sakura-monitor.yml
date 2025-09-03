@@ -31,7 +31,7 @@ jobs:
         SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         AUTO_MODE: '1'
       run: |
-        python sakura_checer.py auto
+        python sakura_checker.py auto
         
     - name: Upload maintenance history
       uses: actions/upload-artifact@v3
