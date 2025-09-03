@@ -32,19 +32,6 @@ jobs:
         AUTO_MODE: '1'
       run: |
         python sakura_checker.py auto
-
-    # ✅ 強制テスト送信用のステップ（確認が済んだら削除してOK）
-    - name: Test Slack notification
-      env:
-        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-      run: |
-        echo "Forcing Slack test notification..."
-        python - <<'EOF'
-import os, requests
-webhook_url = os.environ.get("SLACK_WEBHOOK_URL")
-resp = requests.post(webhook_url, json={"text": "✅ GitHub ActionsからのSlack送信テスト成功！"})
-print("Status:", resp.status_code, resp.text)
-EOF
         
     - name: Upload maintenance history
       uses: actions/upload-artifact@v4
@@ -53,3 +40,15 @@ EOF
         name: maintenance-history-${{ github.run_number }}
         path: maintenance_sent.json
         retention-days: 30
+    - name: Test Slack notification
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      run: |
+        echo "Forcing Slack test notification..."
+        python - <<EOF
+import os, requests
+webhook_url = os.environ.get("SLACK_WEBHOOK_URL")
+resp = requests.post(webhook_url, json={"text": "✅ GitHub ActionsからのSlack送信テスト成功！"})
+print("Status:", resp.status_code, resp.text)
+EOF
+
