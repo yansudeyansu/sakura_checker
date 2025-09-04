@@ -1,514 +1,391 @@
-# さくらインターネット ステータス監視システム
+#!/usr/bin/env python3
+# さくらインターネット API監視システム
 # 
 # 機能概要:
-# 1. さくらインターネットのステータスページを監視
-# 2. 障害発生時は毎回Slack通知を送信
-# 3. メンテナンス通知は重複を避けて初回のみ送信
-# 4. 正常時の通知は送信しない（要件により無効化）
+# 1. さくらインターネットのメンテナンス・障害情報APIを利用
+# 2. 各サービス（レンタルサーバー、クラウド、IoT、ドメイン・SSL）を監視
+# 3. 今日以降のイベントのみを通知対象とする
+# 4. 重複通知を防ぐハッシュベースシステム
 #
-# 通知ルール:
-# - 障害通知: 全て送信（正常復旧含む）
-# - メンテナンス通知: 初回のみ送信、同一内容の重複は送信しない
-# - 正常時通知: 送信しない
+# API仕様:
+# - ベースURL: https://help.sakura.ad.jp/maint/api/v1/feeds/
+# - パラメータ: service, type, ordering, limit
+# - サービス: rs, cloud, iot, domainssl
+# - タイプ: maint, trouble
 
 import requests
-from bs4 import BeautifulSoup
 from datetime import datetime, timezone, timedelta
 import os
 import json
 import hashlib
 
 # Windows環境での文字化け対策
-# コンソールの出力エンコーディングをUTF-8に設定
 if os.name == 'nt':
     import ctypes
     ctypes.windll.kernel32.SetConsoleOutputCP(65001)
 
-# Slack Webhook URL（環境変数から必須で取得）
-# このURLを使用してSlackチャンネルに通知を送信します
-# セキュリティ上、GitHub Secretsに設定することが必須です
-SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
+# Slack Webhook URL（環境変数から取得）
+SLACK_WEBHOOK_URL = 'https://hooks.slack.com/services/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'
 
 if not SLACK_WEBHOOK_URL:
     print("[エラー] SLACK_WEBHOOK_URL環境変数が設定されていません")
     print("GitHub Secrets に SLACK_WEBHOOK_URL を設定してください")
     exit(1)
 
-# メンテナンス通知の重複チェック用ファイル
-# 送信済みのメンテナンス通知のハッシュ値を保存して重複を防ぐ
-MAINTENANCE_HASH_FILE = "maintenance_sent.json"
+# 通知履歴保存ファイル
+NOTIFICATION_HASH_FILE = "notification_sent.json"
 
-def load_sent_maintenance_hashes():
-    """送信済みメンテナンス通知のハッシュを読み込み
+# サービス定義
+SERVICES = {
+    'rs': 'さくらのレンタルサーバー',
+    'cloud': 'さくらのクラウド',
+    'iot': 'さくらのIoT',
+    'domainssl': 'ドメイン・SSL'
+}
+
+# イベントタイプ定義
+EVENT_TYPES = {
+    'maint': 'メンテナンス',
+    'trouble': '障害'
+}
+
+def load_sent_notification_hashes():
+    """送信済み通知のハッシュを読み込み
     
     Returns:
         dict: 送信済み通知のハッシュ辞書
-              キー: "サービス名_日時", 値: ハッシュ値
     """
-    # ハッシュファイルが存在する場合は読み込み
-    if os.path.exists(MAINTENANCE_HASH_FILE):
+    if os.path.exists(NOTIFICATION_HASH_FILE):
         try:
-            with open(MAINTENANCE_HASH_FILE, 'r', encoding='utf-8') as f:
+            with open(NOTIFICATION_HASH_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except Exception:
-            # ファイル読み込みエラーの場合は空の辞書を返す
+        except Exception as e:
+            print(f"[警告] ハッシュファイル読み込みエラー: {e}")
             return {}
-    # ファイルが存在しない場合は空の辞書を返す
     return {}
 
-def save_sent_maintenance_hashes(hashes):
-    """送信済みメンテナンス通知のハッシュを保存
+def save_sent_notification_hashes(hashes):
+    """送信済み通知のハッシュを保存
     
     Args:
         hashes (dict): 保存するハッシュ辞書
     """
     try:
-        # JSONファイルにハッシュ辞書を保存
-        # ensure_ascii=False: 日本語文字を適切に保存
-        # indent=2: 読みやすいフォーマットで保存
-        with open(MAINTENANCE_HASH_FILE, 'w', encoding='utf-8') as f:
+        with open(NOTIFICATION_HASH_FILE, 'w', encoding='utf-8') as f:
             json.dump(hashes, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        # ファイル保存に失敗した場合は警告を表示
-        print(f"[警告] ハッシュファイルの保存に失敗: {e}")
+        print(f"[警告] ハッシュファイル保存エラー: {e}")
 
-def generate_maintenance_hash(service, message):
-    """メンテナンス通知のハッシュを生成
+def generate_notification_hash(service, event_type, event_data):
+    """通知のユニークハッシュを生成
     
     Args:
         service (str): サービス名
-        message (str): メッセージ内容
+        event_type (str): イベントタイプ
+        event_data (dict): イベントデータ
         
     Returns:
-        str: 16文字の短縮ハッシュ値
+        str: ハッシュ値
     """
-    # サービス名とメッセージ内容を結合してハッシュ生成用の文字列を作成
-    content = f"{service}:{message}"
-    
-    # SHA256ハッシュを生成し、16文字に短縮
-    # 短縮することでファイルサイズを削減し、可読性を向上
-    return hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]
+    # イベントの一意性を保つための文字列を作成
+    unique_string = f"{service}:{event_type}:{event_data.get('id', '')}:{event_data.get('event_start', '')}"
+    return hashlib.sha256(unique_string.encode('utf-8')).hexdigest()[:16]
 
-def is_maintenance_already_sent(service, message):
-    """メンテナンス通知が既に送信済みかチェック
+def is_notification_already_sent(service, event_type, event_data):
+    """通知が既に送信済みかチェック
     
     Args:
         service (str): サービス名
-        message (str): メッセージ内容
+        event_type (str): イベントタイプ
+        event_data (dict): イベントデータ
         
     Returns:
-        bool: 既に送信済みの場合True、未送信の場合False
+        bool: 送信済みの場合True
     """
-    # 保存済みのハッシュ辞書を読み込み
-    hashes = load_sent_maintenance_hashes()
-    
-    # 現在の通知内容からハッシュを生成
-    current_hash = generate_maintenance_hash(service, message)
-    
-    # 生成したハッシュが既存のハッシュ値に含まれているかチェック
+    hashes = load_sent_notification_hashes()
+    current_hash = generate_notification_hash(service, event_type, event_data)
     return current_hash in hashes.values()
 
-def mark_maintenance_as_sent(service, message):
-    """メンテナンス通知を送信済みとしてマーク
+def mark_notification_as_sent(service, event_type, event_data):
+    """通知を送信済みとしてマーク
     
     Args:
         service (str): サービス名
-        message (str): メッセージ内容
+        event_type (str): イベントタイプ
+        event_data (dict): イベントデータ
     """
-    # 既存のハッシュ辞書を読み込み
-    hashes = load_sent_maintenance_hashes()
+    hashes = load_sent_notification_hashes()
+    current_hash = generate_notification_hash(service, event_type, event_data)
     
-    # 現在の通知内容からハッシュを生成
-    current_hash = generate_maintenance_hash(service, message)
-    
-    # ユニークなキーを作成（サービス名_日時形式）
-    # 例: "レンタルサーバ_20250903_180022" (JST)
+    # ユニークなキーを生成
     jst = timezone(timedelta(hours=9))
-    key = f"{service}_{datetime.now(jst).strftime('%Y%m%d_%H%M%S')}"
+    key = f"{service}_{event_type}_{datetime.now(jst).strftime('%Y%m%d_%H%M%S')}"
     
-    # ハッシュ辞書に新しいエントリを追加
     hashes[key] = current_hash
-    
-    # 更新されたハッシュ辞書をファイルに保存
-    save_sent_maintenance_hashes(hashes)
+    save_sent_notification_hashes(hashes)
 
-def send_slack_notification(service, status, url='https://help.sakura.ad.jp/status/'):
+def send_slack_notification(service_name, event_type, event_count):
     """Slackに通知を送信
     
     Args:
-        service (str): サービス名（例: "レンタルサーバ", "クラウド"）
-        status (str): ステータス（"障害", "メンテナンス", "正常"）
-        url (str): 詳細確認用URL
+        service_name (str): サービス名
+        event_type (str): イベントタイプ（メンテナンス/障害）
+        event_count (int): イベント数
     """
-    
-    # ステータス別にメッセージの色、アイコン、内容を設定
-    if status == '障害':
-        color = "danger"  # 赤色で警告レベルの表示
-        message = f"{service}で障害が発生しました"
-        icon = ":red_circle:"
-        # 障害時は@hereメンションを追加してチャンネル全体に緊急通知
-        text = f"{icon} <!here> さくらインターネット緊急通知"
-    elif status == 'メンテナンス':
-        color = "warning"  # 黄色で注意レベルの表示
-        message = f"{service}でメンテナンスが予定されています"
+    # メッセージ内容を作成
+    if event_type == 'メンテナンス':
+        color = "warning"  # 黄色
         icon = ":large_blue_circle:"
-        text = f"{icon} さくらインターネット通知"
-        
-        # メンテナンス通知の重複チェック
-        # 同じ内容のメンテナンス通知が既に送信済みの場合はスキップ
-        if is_maintenance_already_sent(service, message):
-            print(f"[スキップ] {service}のメンテナンス通知は送信済み")
-            return  # 処理を終了して通知を送信しない
-    else:
-        # 正常復旧時の設定
-        color = "good"  # 緑色で正常レベルの表示
-        message = f"{service}が復旧しました"
-        icon = ":green_circle:"
-        text = f"{icon} さくらインターネット通知"
-    
-    # Slack通知用のメッセージペイロードを構築
-    # Slack Incoming Webhooksの形式に従ってJSONデータを作成
+        if event_count == 1:
+            message = f"[{service_name}] メンテナンス情報があります"
+        else:
+            message = f"[{service_name}] メンテナンス情報があります（{event_count}件）"
+    else:  # 障害
+        color = "danger"  # 赤色
+        icon = ":red_circle:"
+        if event_count == 1:
+            message = f"[{service_name}] 障害情報があります"
+        else:
+            message = f"[{service_name}] 障害情報があります（{event_count}件）"
+        # 障害時は@hereメンションを追加
+        message = f"{icon} <!here> {message}"
+
+    # JST時刻を取得
+    jst = timezone(timedelta(hours=9))
+    now_jst = datetime.now(jst)
+
+    # Slack通知用のペイロードを作成
     slack_data = {
-        "text": text,  # メイン通知メッセージ
-        "attachments": [  # 詳細情報を含むアタッチメント
+        "text": message,
+        "attachments": [
             {
-                "color": color,  # メッセージの色（danger/warning/good）
-                "fields": [  # 構造化された情報フィールド
+                "color": color,
+                "fields": [
                     {
                         "title": "サービス",
-                        "value": service,
-                        "short": True  # 同じ行に複数フィールドを表示
+                        "value": service_name,
+                        "short": True
                     },
                     {
-                        "title": "状態", 
-                        "value": status,
-                        "short": True  # 同じ行に複数フィールドを表示
+                        "title": "種別",
+                        "value": event_type,
+                        "short": True
                     },
                     {
-                        "title": "メッセージ",
-                        "value": message,
-                        "short": False  # 単独行で表示
+                        "title": "件数",
+                        "value": str(event_count),
+                        "short": True
                     },
                     {
-                        "title": "詳細確認",
-                        "value": url,
-                        "short": False  # 単独行で表示
+                        "title": "確認時刻",
+                        "value": now_jst.strftime('%Y-%m-%d %H:%M:%S JST'),
+                        "short": True
                     }
                 ],
-                "footer": "さくらインターネット監視bot",  # フッター情報
-                "ts": int(datetime.now(timezone(timedelta(hours=9))).timestamp())  # JST タイムスタンプ
+                "footer": "さくらインターネット監視bot（API版）",
+                "ts": int(now_jst.timestamp())
             }
         ]
     }
-    
-    # Slack Webhook URLにPOSTリクエストを送信
+
+    # Slack Webhookに送信
     try:
         response = requests.post(
             SLACK_WEBHOOK_URL,
-            data=json.dumps(slack_data),  # JSONデータを文字列に変換
-            headers={'Content-Type': 'application/json'}  # JSON形式を指定
+            data=json.dumps(slack_data),
+            headers={'Content-Type': 'application/json'},
+            timeout=10
         )
         
-        # レスポンス状態をチェック
         if response.status_code == 200:
             print(f"[成功] Slack通知送信: {message}")
-            
-            # メンテナンス通知の場合のみ送信済みとしてマーク
-            # 障害通知は毎回送信するため、履歴に保存しない
-            if status == 'メンテナンス':
-                mark_maintenance_as_sent(service, message)
         else:
-            # HTTP エラーの場合
             print(f"[失敗] Slack通知エラー: {response.status_code}")
             
     except Exception as e:
-        # ネットワークエラーやその他の例外の場合
         print(f"[エラー] Slack送信失敗: {e}")
 
-def check_sakura_status(send_to_slack=True):
-    """さくらインターネットのステータスページをチェック
+def fetch_api_data(service, event_type):
+    """さくらインターネットAPIからデータを取得
+    
+    Args:
+        service (str): サービス識別子（rs, cloud, iot, domainssl）
+        event_type (str): イベントタイプ（maint, trouble）
+        
+    Returns:
+        dict: APIレスポンス、エラー時はNone
+    """
+    api_url = f"https://help.sakura.ad.jp/maint/api/v1/feeds/"
+    params = {
+        'service': service,
+        'type': event_type,
+        'ordering': 'event_start',
+        'limit': 100
+    }
+    
+    try:
+        print(f"[デバッグ] API呼び出し: {service} - {event_type}")
+        response = requests.get(api_url, params=params, timeout=15)
+        response.raise_for_status()
+        
+        data = response.json()
+        print(f"[デバッグ] API結果: {len(data.get('results', []))}件取得")
+        return data
+        
+    except requests.exceptions.RequestException as e:
+        print(f"[エラー] API呼び出し失敗 ({service}-{event_type}): {e}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"[エラー] JSONデコードエラー ({service}-{event_type}): {e}")
+        return None
+    except Exception as e:
+        print(f"[エラー] 予期しないエラー ({service}-{event_type}): {e}")
+        return None
+
+def is_today_or_later(event_start_str):
+    """イベント開始日が今日以降かチェック
+    
+    Args:
+        event_start_str (str): イベント開始日時文字列（UNIXタイムスタンプまたはISO形式）
+        
+    Returns:
+        bool: 今日以降の場合True
+    """
+    try:
+        # UNIXタイムスタンプの場合（文字列が数字のみ）
+        if event_start_str.isdigit():
+            event_start = datetime.fromtimestamp(int(event_start_str), tz=timezone.utc)
+        else:
+            # ISO形式の場合
+            event_start = datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
+        
+        # JSTで今日の開始時刻を取得
+        jst = timezone(timedelta(hours=9))
+        today_start = datetime.now(jst).replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # イベント開始時刻をJSTに変換
+        event_start_jst = event_start.astimezone(jst)
+        
+        # デバッグ出力（必要に応じてコメントアウト）
+        # print(f"    [日時チェック] {event_start_str} → {event_start_jst.strftime('%Y-%m-%d %H:%M:%S JST')}")
+        
+        return event_start_jst >= today_start
+        
+    except Exception as e:
+        print(f"[警告] 日時解析エラー: {event_start_str} - {e}")
+        return False
+
+def check_sakura_api_status(send_to_slack=True):
+    """さくらインターネットAPIを使用してステータスをチェック
     
     Args:
         send_to_slack (bool): Slack通知を送信するかどうか
-                              True: 通知送信, False: ログ出力のみ
     """
-    
-    # 実行開始ログ（日本時間で表示）
-    jst = timezone(timedelta(hours=9))  # 日本標準時（JST = UTC+9）
+    # 実行開始ログ
+    jst = timezone(timedelta(hours=9))
     now_jst = datetime.now(jst)
     
     print("=" * 60)
-    print("さくらインターネット ステータス監視")
+    print("さくらインターネット API監視システム")
     print(f"実行時刻: {now_jst.strftime('%Y-%m-%d %H:%M:%S')} JST")
     print("=" * 60)
     
-    # さくらインターネットのステータスページURL
-    url = 'https://help.sakura.ad.jp/status/'
+    # 通知が発生したかのフラグ
+    alert_found = False
     
-    try:
-        # ステータスページからHTMLを取得
-        response = requests.get(url)
-        response.raise_for_status()  # HTTPエラーの場合は例外を発生
+    # 各サービス・イベントタイプについてチェック
+    for service_id, service_name in SERVICES.items():
+        print(f"\n[チェック] {service_name} ({service_id})")
+        print("-" * 40)
         
-        # BeautifulSoupでHTMLを解析
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # 監視対象サービス（実際のページで見つかるサービス名）
-        service_mappings = {
-            'さくらのレンタルサーバ': 'レンタルサーバ',
-            'さくらのクラウド': 'クラウド', 
-            'さくらのIoT': 'IoT',
-            'ドメイン・SSL': 'ドメイン・SSL',
-            'その他': 'その他'
-        }
-        
-        # 障害・メンテナンス情報が見つかったかのフラグ
-        alert_found = False
-        
-        print(f"[デバッグ] メンテナンスモード検出システムを実行中...")
-        
-        # 1. bodyタグのmaintenanceクラスをチェック（最高精度）
-        body_tag = soup.find('body')
-        if body_tag:
-            body_classes = body_tag.get('class', [])
-            print(f"[デバッグ] bodyクラス: {body_classes}")
+        for event_type_id, event_type_name in EVENT_TYPES.items():
+            print(f"  {event_type_name}情報を取得中...")
             
-            if 'maintenance' in body_classes:
-                print(f"[重要] メンテナンスモードを検出: bodyタグにmaintenanceクラス")
-                message = f"[メンテ] さくらインターネットサービスがメンテナンスモードになっています"
-                print(message)
-                if send_to_slack:
-                    send_slack_notification("さくらインターネット", 'メンテナンス', url)
-                alert_found = True
-        
-        # 2. Status_labelクラスを持つ要素を検索（従来方式）
-        status_elements = soup.find_all('span', class_=lambda x: x and 'Status_label' in ' '.join(x) if x else False)
-        
-        print(f"[デバッグ] Status_labelクラス要素: {len(status_elements)}個発見")
-        
-        # 各Status_label要素を解析
-        for status_elem in status_elements:
-            status_text = status_elem.get_text(strip=True)
-            print(f"[デバッグ] ステータス要素: '{status_text}'")
+            # APIからデータを取得
+            api_data = fetch_api_data(service_id, event_type_id)
             
-            # 対応するサービス名を探す（兄弟要素や親要素から）
-            service_name = None
+            if api_data is None:
+                print(f"    [警告] {event_type_name}情報の取得に失敗")
+                continue
+                
+            # resultsから今日以降のイベントをフィルタ
+            results = api_data.get('results', [])
+            today_or_later_events = []
             
-            # 前の兄弟要素でサービス名を探す
-            prev_sibling = status_elem.find_previous_sibling()
-            if prev_sibling:
-                service_text = prev_sibling.get_text(strip=True)
-                for full_service_name in service_mappings.keys():
-                    if full_service_name in service_text:
-                        service_name = service_mappings[full_service_name]
-                        break
+            for event in results:
+                event_start = event.get('event_start')
+                if event_start and is_today_or_later(event_start):
+                    today_or_later_events.append(event)
+                    print(f"    [検出] ID:{event.get('id', 'N/A')} 開始:{event_start}")
             
-            # 親要素でサービス名を探す
-            if not service_name and status_elem.parent:
-                parent_text = status_elem.parent.get_text(strip=True)
-                for full_service_name in service_mappings.keys():
-                    if full_service_name in parent_text:
-                        service_name = service_mappings[full_service_name]
-                        break
+            event_count = len(today_or_later_events)
             
-            # 周辺の要素でサービス名を探す
-            if not service_name:
-                # Status_serviceクラスの要素を探す
-                service_elem = soup.find('div', class_=lambda x: x and 'Status_service' in ' '.join(x) if x else False)
-                if service_elem:
-                    service_text = service_elem.get_text(strip=True)
-                    for full_service_name in service_mappings.keys():
-                        if full_service_name in service_text:
-                            service_name = service_mappings[full_service_name]
-                            break
-            
-            # サービス名が見つからない場合は汎用名を使用
-            if not service_name:
-                service_name = "未特定サービス"
-            
-            print(f"[デバッグ] 特定されたサービス: '{service_name}', ステータス: '{status_text}'")
-            
-            # ステータスに基づいた通知処理
-            status_type = '正常'
-            
-            # メンテナンス関連の判定
-            maintenance_keywords = ['メンテナンス予定', 'メンテナンス中', '一部 メンテナンス予定あり', 'メンテナンス実施中']
-            if any(keyword in status_text for keyword in maintenance_keywords):
-                status_type = 'メンテナンス'
-                message = f"[メンテ] {service_name}でメンテナンスが予定されています（{status_text}）"
-                print(message)
-                if send_to_slack:
-                    send_slack_notification(service_name, status_type, url)
-                alert_found = True
-            
-            # 障害関連の判定
-            elif any(keyword in status_text for keyword in ['障害', '問題', 'エラー', '停止']):
-                status_type = '障害'
-                message = f"[障害] {service_name}で障害が発生しました（{status_text}）"
-                print(message)
-                if send_to_slack:
-                    send_slack_notification(service_name, status_type, url)
-                alert_found = True
-            
-            # 正常時ログ
+            if event_count > 0:
+                print(f"    [結果] {event_type_name}: {event_count}件の今日以降イベント")
+                
+                # 重複チェック（最初のイベントで代表）
+                representative_event = today_or_later_events[0]
+                
+                if not is_notification_already_sent(service_id, event_type_id, representative_event):
+                    if send_to_slack:
+                        send_slack_notification(service_name, event_type_name, event_count)
+                        mark_notification_as_sent(service_id, event_type_id, representative_event)
+                    alert_found = True
+                else:
+                    print(f"    [スキップ] {event_type_name}通知は送信済み")
             else:
-                print(f"[正常] {service_name} は正常です（{status_text}）")
-        
-        # Status_labelクラスが見つからない場合のフォールバック
-        if not status_elements:
-            print("[警告] Status_labelクラスの要素が見つかりません。テキストベース解析にフォールバック")
-            
-            # ページ全体のテキストでメンテナンス・障害情報をチェック
-            page_text = soup.get_text()
-            
-            for full_service_name, short_name in service_mappings.items():
-                if full_service_name in page_text:
-                    # サービス名周辺のテキストを取得
-                    service_index = page_text.find(full_service_name)
-                    context_start = max(0, service_index - 100)
-                    context_end = min(len(page_text), service_index + len(full_service_name) + 100)
-                    context = page_text[context_start:context_end]
-                    
-                    if any(keyword in context for keyword in maintenance_keywords):
-                        message = f"[メンテ] {short_name}でメンテナンスが予定されています"
-                        print(message)
-                        if send_to_slack:
-                            send_slack_notification(short_name, 'メンテナンス', url)
-                        alert_found = True
-                    elif any(keyword in context for keyword in ['障害', '問題', 'エラー', '停止']):
-                        message = f"[障害] {short_name}で障害が発生しました"
-                        print(message)
-                        if send_to_slack:
-                            send_slack_notification(short_name, '障害', url)
-                        alert_found = True
-        
-        # 障害・メンテナンス情報が見つからなかった場合
-        if not alert_found:
-            print("現在、障害・メンテナンス情報はありません")
-            # 正常時の通知は送信しない（要件に基づき無効化）
-            # 以前は send_all_normal_notification() を呼び出していたが、
-            # 要件変更により正常時通知は無効化された
-        
-        # 詳細確認用URLと終了ログを表示
-        print(f"\n詳細確認: {url}")
-        print("=" * 60)
-        
-    except Exception as e:
-        # ネットワークエラーやページ解析エラーなどの例外処理
-        print(f"[エラー] エラーが発生しました: {e}")
-        
-        # 監視システム自体のエラーをSlackに通知
-        if send_to_slack:
-            send_slack_notification("監視システム", "エラー", url)
-        
-        print("=" * 60)
-
-# ========================================
-# 正常時の通知機能（要件により無効化）
-# ========================================
-# 以下の関数は要件変更により使用されなくなりました。
-# 正常時の通知は送信せず、障害・メンテナンス時のみ通知する仕様に変更。
-# 将来的に正常時通知が必要になった場合のため、コードは保持しています。
-#
-# def send_all_normal_notification(url='https://help.sakura.ad.jp/status/'):
-#     """すべてのサービスが正常な場合のSlack通知
-#     
-#     Args:
-#         url (str): 詳細確認用URL
-#     """
-#     
-#     slack_data = {
-#         "text": ":green_circle: さくらインターネット監視結果",
-#         "attachments": [
-#             {
-#                 "color": "good",
-#                 "fields": [
-#                     {
-#                         "title": "監視結果",
-#                         "value": "現在、障害・メンテナンス情報はありません",
-#                         "short": False
-#                     },
-#                     {
-#                         "title": "詳細確認",
-#                         "value": url,
-#                         "short": False
-#                     }
-#                 ],
-#                 "footer": "さくらインターネット監視bot",
-#                 "ts": int(datetime.now().timestamp())
-#             }
-#         ]
-#     }
-#     
-#     try:
-#         response = requests.post(
-#             SLACK_WEBHOOK_URL,
-#             data=json.dumps(slack_data),
-#             headers={'Content-Type': 'application/json'}
-#         )
-#         
-#         if response.status_code == 200:
-#             print("[成功] Slack通知送信: すべてのサービス正常")
-#         else:
-#             print(f"[失敗] Slack通知エラー: {response.status_code}")
-#             
-#     except Exception as e:
-#         print(f"[エラー] Slack送信失敗: {e}")
+                print(f"    [結果] {event_type_name}: 今日以降のイベントなし")
+    
+    # 総合結果
+    if not alert_found:
+        print(f"\n[結果] 現在、今日以降のメンテナンス・障害情報はありません")
+    else:
+        print(f"\n[結果] {alert_found}件の通知を送信しました")
+    
+    print("=" * 60)
 
 def test_slack_notification():
-    """Slack通知のテスト関数
-    
-    機能:
-    - 障害通知とメンテナンス通知のテストを実行
-    - メンテナンス通知の重複チェック機能も検証可能
-    - 実際のSlack通知を送信するため、テスト時は注意が必要
-    """
+    """Slack通知のテスト関数"""
     print("=" * 60)
     print("【Slack通知テスト】")
     print("=" * 60)
     
-    # テスト用のサービスとステータスの組み合わせ
-    # 障害通知: 毎回送信される
-    # メンテナンス通知: 初回のみ送信、2回目以降はスキップされる
-    test_services = [
-        ('レンタルサーバ', '障害'),      # 障害通知テスト
-        ('クラウド', 'メンテナンス'),     # メンテナンス通知テスト
+    # テスト用の通知
+    test_cases = [
+        ('さくらのレンタルサーバー', 'メンテナンス', 1),
+        ('さくらのクラウド', '障害', 2),
     ]
     
-    # 各テストケースについて通知を送信
-    for service, status in test_services:
-        print(f"テスト通知送信: {service} - {status}")
-        send_slack_notification(service, status)
+    for service_name, event_type, count in test_cases:
+        print(f"テスト通知送信: {service_name} - {event_type} ({count}件)")
+        send_slack_notification(service_name, event_type, count)
         
     print("=" * 60)
 
-# ========================================
-# メイン処理
-# ========================================
-if __name__ == "__main__":
+def main():
+    """メイン処理"""
     import sys
     
     # 環境変数AUTO_MODEが設定されている場合は自動実行
     if os.environ.get('AUTO_MODE') == '1' or len(sys.argv) > 1 and sys.argv[1] == 'auto':
-        # 自動監視モード: ステータスをチェックしてSlack通知を送信
         print("自動監視モードで実行中...")
-        check_sakura_status(send_to_slack=True)
+        check_sakura_api_status(send_to_slack=True)
     else:
-        # 対話モード: 実行モード選択メニュー
+        # 対話モード
         print("1. 通常監視（Slack通知あり）")
-        print("2. テスト実行（Slack通知なし）")
+        print("2. テスト実行（Slack通知なし）") 
         print("3. Slack通知テスト")
         
         choice = input("選択してください (1-3): ")
         
         if choice == "1":
-            # 本番運用モード: ステータスをチェックしてSlack通知を送信
-            check_sakura_status(send_to_slack=True)
+            check_sakura_api_status(send_to_slack=True)
         elif choice == "2":
-            # デバッグモード: ステータスチェックのみでSlack通知は送信しない
-            check_sakura_status(send_to_slack=False)
+            check_sakura_api_status(send_to_slack=False)
         elif choice == "3":
-            # テストモード: Slack通知機能をテスト（実際に通知が送信される）
             test_slack_notification()
         else:
             print("無効な選択です")
+
+if __name__ == "__main__":
+    main()

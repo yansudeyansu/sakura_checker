@@ -26,14 +26,14 @@ jobs:
         pip install --upgrade pip
         pip install requests beautifulsoup4
         
-    - name: Check maintenance history file
+    - name: Check notification history file
       run: |
-        if [ -f maintenance_sent.json ]; then
-          echo "Previous maintenance history found:"
-          cat maintenance_sent.json
+        if [ -f notification_sent.json ]; then
+          echo "Previous notification history found:"
+          cat notification_sent.json
         else
-          echo "No previous maintenance history found, starting fresh"
-          echo '{}' > maintenance_sent.json
+          echo "No previous notification history found, starting fresh"
+          echo '{}' > notification_sent.json
         fi
         
     - name: Run Sakura Monitor
@@ -43,21 +43,21 @@ jobs:
       run: |
         python sakura_checker.py auto
         
-    - name: Commit maintenance history
+    - name: Commit notification history
       run: |
-        if [ -f maintenance_sent.json ] && [ -s maintenance_sent.json ]; then
+        if [ -f notification_sent.json ] && [ -s notification_sent.json ]; then
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add maintenance_sent.json
+          git add notification_sent.json
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "Update maintenance history [skip ci]"
+            git commit -m "Update notification history [skip ci]"
             git push
-            echo "Maintenance history updated"
+            echo "Notification history updated"
           fi
         else
-          echo "No maintenance history to commit"
+          echo "No notification history to commit"
         fi
 
     # - name: Test Slack notification
