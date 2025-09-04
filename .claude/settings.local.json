@@ -8,7 +8,17 @@
       "Bash(git commit:*)",
       "Bash(git remote add:*)",
       "Bash(git branch:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Read(/C:\\Users\\102302\\OneDrive - ＤＲＣ株式会社\\infos\\tool\\SAKURA_info/**)",
+      "Read(/C:\\Users\\102302\\OneDrive - ＤＲＣ株式会社\\infos\\tool\\SAKURA_info/**)",
+      "Bash(set SLACK_WEBHOOK_URL=https://hooks.slack.com/services/dummy)",
+      "WebFetch(domain:help.sakura.ad.jp)",
+      "WebSearch",
+      "WebFetch(domain:support.sakura.ad.jp)",
+      "Read(/C:\\Users\\102302\\OneDrive - ＤＲＣ株式会社\\infos\\tool\\SAKURA_info/**)",
+      "Read(/C:\\Users\\102302\\OneDrive - ＤＲＣ株式会社\\infos\\tool\\SAKURA_info/**)",
+      "Read(/C:\\Users\\102302\\OneDrive - ＤＲＣ株式会社\\infos\\tool\\SAKURA_info/**)",
+      "Read(/C:\\Users\\102302\\OneDrive - ＤＲＣ株式会社\\infos\\tool\\SAKURA_info/**)"
     ],
     "deny": [],
     "ask": []

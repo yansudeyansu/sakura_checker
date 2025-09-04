@@ -253,40 +253,134 @@ def check_sakura_status(send_to_slack=True):
         # BeautifulSoupでHTMLを解析
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # 監視対象サービスのキーワードリスト
-        # これらのキーワードがページ内に含まれているかチェック
-        service_keywords = ['クラウド', 'VPS', 'ドメイン', 'SSL', '専用サーバ']
+        # 監視対象サービス（実際のページで見つかるサービス名）
+        service_mappings = {
+            'さくらのレンタルサーバ': 'レンタルサーバ',
+            'さくらのクラウド': 'クラウド', 
+            'さくらのIoT': 'IoT',
+            'ドメイン・SSL': 'ドメイン・SSL',
+            'その他': 'その他'
+        }
         
         # 障害・メンテナンス情報が見つかったかのフラグ
         alert_found = False
         
-        # bodyタグのクラスをチェックしてメンテナンス状態を判定
+        print(f"[デバッグ] メンテナンスモード検出システムを実行中...")
+        
+        # 1. bodyタグのmaintenanceクラスをチェック（最高精度）
         body_tag = soup.find('body')
-        is_maintenance_page = body_tag and 'maintenance' in (body_tag.get('class', []))
-        
-        print(f"[デバッグ] メンテナンスページ判定: {is_maintenance_page}")
-        
-        # 各サービスキーワードについてステータスをチェック
-        for keyword in service_keywords:
-            # ページ内でキーワードを含むテキスト要素を検索
-            elements = soup.find_all(string=lambda text: text and keyword in text)
+        if body_tag:
+            body_classes = body_tag.get('class', [])
+            print(f"[デバッグ] bodyクラス: {body_classes}")
             
-            if elements:
-                print(f"[デバッグ] {keyword} の要素が {len(elements)} 件見つかりました")
-                
-                # メンテナンスページの場合は、サービス名が含まれていればメンテナンス予定と判定
-                if is_maintenance_page:
-                    status = 'メンテナンス'
-                    message = f"[メンテ] {keyword}でメンテナンスが予定されています"
-                    print(message)
-                    # Slack通知が有効な場合のみ送信
-                    if send_to_slack:
-                        send_slack_notification(keyword, status, url)
-                    alert_found = True
-                else:
-                    # メンテナンスページでない場合は詳細チェック（将来の拡張用）
-                    # 障害情報の詳細チェックロジックをここに追加可能
-                    status = '正常'
+            if 'maintenance' in body_classes:
+                print(f"[重要] メンテナンスモードを検出: bodyタグにmaintenanceクラス")
+                message = f"[メンテ] さくらインターネットサービスがメンテナンスモードになっています"
+                print(message)
+                if send_to_slack:
+                    send_slack_notification("さくらインターネット", 'メンテナンス', url)
+                alert_found = True
+        
+        # 2. Status_labelクラスを持つ要素を検索（従来方式）
+        status_elements = soup.find_all('span', class_=lambda x: x and 'Status_label' in ' '.join(x) if x else False)
+        
+        print(f"[デバッグ] Status_labelクラス要素: {len(status_elements)}個発見")
+        
+        # 各Status_label要素を解析
+        for status_elem in status_elements:
+            status_text = status_elem.get_text(strip=True)
+            print(f"[デバッグ] ステータス要素: '{status_text}'")
+            
+            # 対応するサービス名を探す（兄弟要素や親要素から）
+            service_name = None
+            
+            # 前の兄弟要素でサービス名を探す
+            prev_sibling = status_elem.find_previous_sibling()
+            if prev_sibling:
+                service_text = prev_sibling.get_text(strip=True)
+                for full_service_name in service_mappings.keys():
+                    if full_service_name in service_text:
+                        service_name = service_mappings[full_service_name]
+                        break
+            
+            # 親要素でサービス名を探す
+            if not service_name and status_elem.parent:
+                parent_text = status_elem.parent.get_text(strip=True)
+                for full_service_name in service_mappings.keys():
+                    if full_service_name in parent_text:
+                        service_name = service_mappings[full_service_name]
+                        break
+            
+            # 周辺の要素でサービス名を探す
+            if not service_name:
+                # Status_serviceクラスの要素を探す
+                service_elem = soup.find('div', class_=lambda x: x and 'Status_service' in ' '.join(x) if x else False)
+                if service_elem:
+                    service_text = service_elem.get_text(strip=True)
+                    for full_service_name in service_mappings.keys():
+                        if full_service_name in service_text:
+                            service_name = service_mappings[full_service_name]
+                            break
+            
+            # サービス名が見つからない場合は汎用名を使用
+            if not service_name:
+                service_name = "未特定サービス"
+            
+            print(f"[デバッグ] 特定されたサービス: '{service_name}', ステータス: '{status_text}'")
+            
+            # ステータスに基づいた通知処理
+            status_type = '正常'
+            
+            # メンテナンス関連の判定
+            maintenance_keywords = ['メンテナンス予定', 'メンテナンス中', '一部 メンテナンス予定あり', 'メンテナンス実施中']
+            if any(keyword in status_text for keyword in maintenance_keywords):
+                status_type = 'メンテナンス'
+                message = f"[メンテ] {service_name}でメンテナンスが予定されています（{status_text}）"
+                print(message)
+                if send_to_slack:
+                    send_slack_notification(service_name, status_type, url)
+                alert_found = True
+            
+            # 障害関連の判定
+            elif any(keyword in status_text for keyword in ['障害', '問題', 'エラー', '停止']):
+                status_type = '障害'
+                message = f"[障害] {service_name}で障害が発生しました（{status_text}）"
+                print(message)
+                if send_to_slack:
+                    send_slack_notification(service_name, status_type, url)
+                alert_found = True
+            
+            # 正常時ログ
+            else:
+                print(f"[正常] {service_name} は正常です（{status_text}）")
+        
+        # Status_labelクラスが見つからない場合のフォールバック
+        if not status_elements:
+            print("[警告] Status_labelクラスの要素が見つかりません。テキストベース解析にフォールバック")
+            
+            # ページ全体のテキストでメンテナンス・障害情報をチェック
+            page_text = soup.get_text()
+            
+            for full_service_name, short_name in service_mappings.items():
+                if full_service_name in page_text:
+                    # サービス名周辺のテキストを取得
+                    service_index = page_text.find(full_service_name)
+                    context_start = max(0, service_index - 100)
+                    context_end = min(len(page_text), service_index + len(full_service_name) + 100)
+                    context = page_text[context_start:context_end]
+                    
+                    if any(keyword in context for keyword in maintenance_keywords):
+                        message = f"[メンテ] {short_name}でメンテナンスが予定されています"
+                        print(message)
+                        if send_to_slack:
+                            send_slack_notification(short_name, 'メンテナンス', url)
+                        alert_found = True
+                    elif any(keyword in context for keyword in ['障害', '問題', 'エラー', '停止']):
+                        message = f"[障害] {short_name}で障害が発生しました"
+                        print(message)
+                        if send_to_slack:
+                            send_slack_notification(short_name, '障害', url)
+                        alert_found = True
         
         # 障害・メンテナンス情報が見つからなかった場合
         if not alert_found:
