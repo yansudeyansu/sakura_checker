@@ -25,7 +25,7 @@ if os.name == 'nt':
     ctypes.windll.kernel32.SetConsoleOutputCP(65001)
 
 # Slack Webhook URL（環境変数から取得）
-SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
+SLACK_WEBHOOK_URL = 'https://hooks.slack.com/services/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'
 
 if not SLACK_WEBHOOK_URL:
     print("[エラー] SLACK_WEBHOOK_URL環境変数が設定されていません")
@@ -124,13 +124,14 @@ def mark_notification_as_sent(service, event_type, event_data):
     hashes[key] = current_hash
     save_sent_notification_hashes(hashes)
 
-def send_slack_notification(service_name, event_type, event_count):
+def send_slack_notification(service_name, event_type, event_count, events_data):
     """Slackに通知を送信
     
     Args:
         service_name (str): サービス名
         event_type (str): イベントタイプ（メンテナンス/障害）
         event_count (int): イベント数
+        events_data (list): イベントデータのリスト
     """
     # メッセージ内容を作成
     if event_type == 'メンテナンス':
@@ -154,9 +155,29 @@ def send_slack_notification(service_name, event_type, event_count):
     jst = timezone(timedelta(hours=9))
     now_jst = datetime.now(jst)
 
+    # イベントのURL情報を収集
+    urls_text = ""
+    if events_data:
+        urls = []
+        for i, event in enumerate(events_data[:5], 1):  # 最大5件まで表示
+            title = event.get('title', 'タイトルなし')
+            url = event.get('url', '')
+            if url:
+                # URLが長い場合は短縮表示
+                if len(title) > 40:
+                    title = title[:37] + "..."
+                urls.append(f"{i}. <{url}|{title}>")
+            else:
+                urls.append(f"{i}. {title}")
+        
+        if urls:
+            urls_text = "\n\n📋 *詳細情報:*\n" + "\n".join(urls)
+            if len(events_data) > 5:
+                urls_text += f"\n... 他{len(events_data) - 5}件"
+
     # Slack通知用のペイロードを作成
     slack_data = {
-        "text": message,
+        "text": message + urls_text,
         "attachments": [
             {
                 "color": color,
@@ -242,16 +263,23 @@ def fetch_api_data(service, event_type):
         print(f"[エラー] 予期しないエラー ({service}-{event_type}): {e}")
         return None
 
-def is_today_or_later(event_start_str):
-    """イベント開始日が今日以降かチェック
+def is_event_relevant(event_data, event_type):
+    """イベントが通知対象かチェック
     
     Args:
-        event_start_str (str): イベント開始日時文字列（UNIXタイムスタンプまたはISO形式）
+        event_data (dict): イベントデータ
+        event_type (str): イベントタイプ（maint, trouble）
         
     Returns:
-        bool: 今日以降の場合True
+        bool: 通知対象の場合True
     """
     try:
+        event_start_str = event_data.get('event_start')
+        event_end_str = event_data.get('event_end')
+        
+        if not event_start_str:
+            return False
+            
         # UNIXタイムスタンプの場合（文字列が数字のみ）
         if event_start_str.isdigit():
             event_start = datetime.fromtimestamp(int(event_start_str), tz=timezone.utc)
@@ -259,20 +287,42 @@ def is_today_or_later(event_start_str):
             # ISO形式の場合
             event_start = datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
         
-        # JSTで今日の開始時刻を取得
+        # 終了時刻も解析
+        event_end = None
+        if event_end_str:
+            if event_end_str.isdigit():
+                event_end = datetime.fromtimestamp(int(event_end_str), tz=timezone.utc)
+            else:
+                event_end = datetime.fromisoformat(event_end_str.replace('Z', '+00:00'))
+        
+        # JSTで現在時刻と今日の開始時刻を取得
         jst = timezone(timedelta(hours=9))
-        today_start = datetime.now(jst).replace(hour=0, minute=0, second=0, microsecond=0)
+        now_jst = datetime.now(jst)
+        today_start = now_jst.replace(hour=0, minute=0, second=0, microsecond=0)
         
         # イベント開始時刻をJSTに変換
         event_start_jst = event_start.astimezone(jst)
         
-        # デバッグ出力
-        print(f"    [日時チェック] {event_start_str} → {event_start_jst.strftime('%Y-%m-%d %H:%M:%S JST')}")
+        # イベントタイプに応じた判定
+        if event_type == 'trouble':  # 障害
+            # 障害の場合：終了時刻が現在時刻より後（継続中または未来）
+            if event_end:
+                event_end_jst = event_end.astimezone(jst)
+                is_relevant = event_end_jst > now_jst
+                print(f"    [日時チェック] 障害 {event_start_str}〜{event_end_str} → 終了:{event_end_jst.strftime('%Y-%m-%d %H:%M:%S JST')} → 継続中/未来: {is_relevant}")
+            else:
+                # 終了時刻がない場合は開始時刻で判定
+                is_relevant = event_start_jst >= today_start
+                print(f"    [日時チェック] 障害 {event_start_str} → {event_start_jst.strftime('%Y-%m-%d %H:%M:%S JST')} → 今日以降: {is_relevant}")
+        else:  # メンテナンス
+            # メンテナンスの場合：開始時刻が今日以降（予告のため）
+            is_relevant = event_start_jst >= today_start
+            print(f"    [日時チェック] メンテナンス {event_start_str} → {event_start_jst.strftime('%Y-%m-%d %H:%M:%S JST')} → 今日以降: {is_relevant}")
         
-        return event_start_jst >= today_start
+        return is_relevant
         
     except Exception as e:
-        print(f"[警告] 日時解析エラー: {event_start_str} - {e}")
+        print(f"[警告] 日時解析エラー: {event_data} - {e}")
         return False
 
 def check_sakura_api_status(send_to_slack=True):
@@ -313,9 +363,9 @@ def check_sakura_api_status(send_to_slack=True):
             today_or_later_events = []
             
             for event in results:
-                event_start = event.get('event_start')
-                if event_start and is_today_or_later(event_start):
+                if is_event_relevant(event, event_type_id):
                     today_or_later_events.append(event)
+                    event_start = event.get('event_start')
                     print(f"    [検出] ID:{event.get('id', 'N/A')} 開始:{event_start}")
             
             event_count = len(today_or_later_events)
@@ -328,7 +378,7 @@ def check_sakura_api_status(send_to_slack=True):
                 
                 if not is_notification_already_sent(service_id, event_type_id, representative_event):
                     if send_to_slack:
-                        send_slack_notification(service_name, event_type_name, event_count)
+                        send_slack_notification(service_name, event_type_name, event_count, today_or_later_events)
                         mark_notification_as_sent(service_id, event_type_id, representative_event)
                     alert_found = True
                 else:
@@ -358,7 +408,14 @@ def test_slack_notification():
     
     for service_name, event_type, count in test_cases:
         print(f"テスト通知送信: {service_name} - {event_type} ({count}件)")
-        send_slack_notification(service_name, event_type, count)
+        # テスト用のダミーイベントデータ
+        test_events = [
+            {
+                'title': f'テスト{event_type}情報',
+                'url': 'https://support.sakura.ad.jp/test/12345',
+            }
+        ]
+        send_slack_notification(service_name, event_type, count, test_events)
         
     print("=" * 60)
 
