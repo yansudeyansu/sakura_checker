@@ -25,7 +25,7 @@ if os.name == 'nt':
     ctypes.windll.kernel32.SetConsoleOutputCP(65001)
 
 # Slack Webhook URL（環境変数から取得）
-SLACK_WEBHOOK_URL = 'https://hooks.slack.com/services/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'
+SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
 
 if not SLACK_WEBHOOK_URL:
     print("[エラー] SLACK_WEBHOOK_URL環境変数が設定されていません")
@@ -266,8 +266,8 @@ def is_today_or_later(event_start_str):
         # イベント開始時刻をJSTに変換
         event_start_jst = event_start.astimezone(jst)
         
-        # デバッグ出力（必要に応じてコメントアウト）
-        # print(f"    [日時チェック] {event_start_str} → {event_start_jst.strftime('%Y-%m-%d %H:%M:%S JST')}")
+        # デバッグ出力
+        print(f"    [日時チェック] {event_start_str} → {event_start_jst.strftime('%Y-%m-%d %H:%M:%S JST')}")
         
         return event_start_jst >= today_start
         
