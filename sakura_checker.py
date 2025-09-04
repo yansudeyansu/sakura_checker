@@ -76,6 +76,36 @@ def save_sent_notification_hashes(hashes):
     except Exception as e:
         print(f"[警告] ハッシュファイル保存エラー: {e}")
 
+def cleanup_old_notification_hashes():
+    """古い通知履歴をクリーンアップ（7日前より古いものを削除）"""
+    try:
+        hashes = load_sent_notification_hashes()
+        if not hashes:
+            return
+            
+        jst = timezone(timedelta(hours=9))
+        cutoff_date = datetime.now(jst) - timedelta(days=7)
+        cutoff_str = cutoff_date.strftime('%Y%m%d')
+        
+        # 7日前より古いキーを削除
+        keys_to_remove = []
+        for key in hashes.keys():
+            # キー形式: service_type_YYYYMMDD_HHMMSS
+            parts = key.split('_')
+            if len(parts) >= 4:
+                date_str = parts[2]  # YYYYMMDD部分
+                if date_str < cutoff_str:
+                    keys_to_remove.append(key)
+        
+        if keys_to_remove:
+            for key in keys_to_remove:
+                del hashes[key]
+            save_sent_notification_hashes(hashes)
+            print(f"[クリーンアップ] {len(keys_to_remove)}件の古い通知履歴を削除")
+            
+    except Exception as e:
+        print(f"[警告] 通知履歴クリーンアップエラー: {e}")
+
 def generate_notification_hash(service, event_type, event_data):
     """通知のユニークハッシュを生成
     
@@ -91,20 +121,28 @@ def generate_notification_hash(service, event_type, event_data):
     unique_string = f"{service}:{event_type}:{event_data.get('id', '')}:{event_data.get('event_start', '')}"
     return hashlib.sha256(unique_string.encode('utf-8')).hexdigest()[:16]
 
-def is_notification_already_sent(service, event_type, event_data):
-    """通知が既に送信済みかチェック
+def is_notification_already_sent_today(service, event_type):
+    """今日既に通知済みかチェック（毎日単位でリセット）
     
     Args:
         service (str): サービス名
         event_type (str): イベントタイプ
-        event_data (dict): イベントデータ
         
     Returns:
-        bool: 送信済みの場合True
+        bool: 今日既に送信済みの場合True
     """
     hashes = load_sent_notification_hashes()
-    current_hash = generate_notification_hash(service, event_type, event_data)
-    return current_hash in hashes.values()
+    jst = timezone(timedelta(hours=9))
+    today_str = datetime.now(jst).strftime('%Y%m%d')
+    
+    # 今日の通知キーを検索
+    today_key_prefix = f"{service}_{event_type}_{today_str}"
+    
+    for key in hashes.keys():
+        if key.startswith(today_key_prefix):
+            return True
+    
+    return False
 
 def mark_notification_as_sent(service, event_type, event_data):
     """通知を送信済みとしてマーク
@@ -331,6 +369,9 @@ def check_sakura_api_status(send_to_slack=True):
     Args:
         send_to_slack (bool): Slack通知を送信するかどうか
     """
+    # 古い通知履歴をクリーンアップ
+    cleanup_old_notification_hashes()
+    
     # 実行開始ログ
     jst = timezone(timedelta(hours=9))
     now_jst = datetime.now(jst)
@@ -373,16 +414,16 @@ def check_sakura_api_status(send_to_slack=True):
             if event_count > 0:
                 print(f"    [結果] {event_type_name}: {event_count}件の今日以降イベント")
                 
-                # 重複チェック（最初のイベントで代表）
-                representative_event = today_or_later_events[0]
-                
-                if not is_notification_already_sent(service_id, event_type_id, representative_event):
+                # 毎日単位での重複チェック
+                if not is_notification_already_sent_today(service_id, event_type_id):
                     if send_to_slack:
                         send_slack_notification(service_name, event_type_name, event_count, today_or_later_events)
+                        # 代表イベントでマーク（従来の仕様を維持）
+                        representative_event = today_or_later_events[0]
                         mark_notification_as_sent(service_id, event_type_id, representative_event)
                     alert_found = True
                 else:
-                    print(f"    [スキップ] {event_type_name}通知は送信済み")
+                    print(f"    [スキップ] {event_type_name}通知は今日既に送信済み")
             else:
                 print(f"    [結果] {event_type_name}: 今日以降のイベントなし")
     
