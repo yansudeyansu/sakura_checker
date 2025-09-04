@@ -25,7 +25,7 @@ if os.name == 'nt':
     ctypes.windll.kernel32.SetConsoleOutputCP(65001)
 
 # Slack Webhook URL（環境変数から取得）
-SLACK_WEBHOOK_URL = 'https://hooks.slack.com/services/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'
+SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
 
 if not SLACK_WEBHOOK_URL:
     print("[エラー] SLACK_WEBHOOK_URL環境変数が設定されていません")
