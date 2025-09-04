@@ -260,32 +260,33 @@ def check_sakura_status(send_to_slack=True):
         # 障害・メンテナンス情報が見つかったかのフラグ
         alert_found = False
         
+        # bodyタグのクラスをチェックしてメンテナンス状態を判定
+        body_tag = soup.find('body')
+        is_maintenance_page = body_tag and 'maintenance' in (body_tag.get('class', []))
+        
+        print(f"[デバッグ] メンテナンスページ判定: {is_maintenance_page}")
+        
         # 各サービスキーワードについてステータスをチェック
         for keyword in service_keywords:
             # ページ内でキーワードを含むテキスト要素を検索
             elements = soup.find_all(string=lambda text: text and keyword in text)
             
             if elements:
-                # 現在の実装では常に正常として判定
-                # TODO: 実際の障害・メンテナンス検出ロジックを実装する必要がある
-                status = '正常'
+                print(f"[デバッグ] {keyword} の要素が {len(elements)} 件見つかりました")
                 
-                # 障害・メンテナンスの場合のみ表示・通知
-                # 注意: 現在のロジックでは常に正常のため、以下の条件は実行されない
-                if status == '障害':
-                    message = f"[障害] {keyword}で障害が発生しました"
-                    print(message)
-                    # Slack通知が有効な場合のみ送信
-                    if send_to_slack:
-                        send_slack_notification(keyword, status, url)
-                    alert_found = True
-                elif status == 'メンテナンス':
+                # メンテナンスページの場合は、サービス名が含まれていればメンテナンス予定と判定
+                if is_maintenance_page:
+                    status = 'メンテナンス'
                     message = f"[メンテ] {keyword}でメンテナンスが予定されています"
                     print(message)
                     # Slack通知が有効な場合のみ送信
                     if send_to_slack:
                         send_slack_notification(keyword, status, url)
                     alert_found = True
+                else:
+                    # メンテナンスページでない場合は詳細チェック（将来の拡張用）
+                    # 障害情報の詳細チェックロジックをここに追加可能
+                    status = '正常'
         
         # 障害・メンテナンス情報が見つからなかった場合
         if not alert_found:
