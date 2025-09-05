@@ -11,6 +11,8 @@ jobs:
   monitor:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write  # リポジトリへの書き込み権限を付与
     
     steps:
     - name: Checkout repository
@@ -44,6 +46,8 @@ jobs:
         python sakura_checker.py auto
         
     - name: Commit notification history
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         if [ -f notification_sent.json ] && [ -s notification_sent.json ]; then
           git config --local user.email "action@github.com"
@@ -53,7 +57,7 @@ jobs:
             echo "No changes to commit"
           else
             git commit -m "Update notification history [skip ci]"
-            git push
+            git push https://${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
             echo "Notification history updated"
           fi
         else
