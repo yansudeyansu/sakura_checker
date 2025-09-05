@@ -37,10 +37,8 @@ NOTIFICATION_HASH_FILE = "notification_sent.json"
 
 # サービス定義
 SERVICES = {
-    'rs': 'さくらのレンタルサーバー',
-    'cloud': 'さくらのクラウド',
     'iot': 'さくらのIoT',
-    'domainssl': 'ドメイン・SSL'
+    'cloud': 'さくらのクラウド'
 }
 
 # イベントタイプ定義
@@ -122,25 +120,35 @@ def generate_notification_hash(service, event_type, event_data):
     return hashlib.sha256(unique_string.encode('utf-8')).hexdigest()[:16]
 
 def is_notification_already_sent_today(service, event_type):
-    """今日既に通知済みかチェック（毎日単位でリセット）
+    """通知の重複チェック（メンテナンス：日単位、障害：時間単位）
     
     Args:
         service (str): サービス名
         event_type (str): イベントタイプ
         
     Returns:
-        bool: 今日既に送信済みの場合True
+        bool: 既に送信済みの場合True
     """
     hashes = load_sent_notification_hashes()
     jst = timezone(timedelta(hours=9))
-    today_str = datetime.now(jst).strftime('%Y%m%d')
+    now = datetime.now(jst)
     
-    # 今日の通知キーを検索
-    today_key_prefix = f"{service}_{event_type}_{today_str}"
-    
-    for key in hashes.keys():
-        if key.startswith(today_key_prefix):
-            return True
+    if event_type == 'trouble':
+        # 障害：1時間単位でチェック（毎時重複送信OK）
+        current_hour_str = now.strftime('%Y%m%d_%H')
+        hour_key_prefix = f"{service}_{event_type}_{current_hour_str}"
+        
+        for key in hashes.keys():
+            if key.startswith(hour_key_prefix):
+                return True
+    else:
+        # メンテナンス：日単位でチェック（毎日初回のみ）
+        today_str = now.strftime('%Y%m%d')
+        today_key_prefix = f"{service}_{event_type}_{today_str}"
+        
+        for key in hashes.keys():
+            if key.startswith(today_key_prefix):
+                return True
     
     return False
 
@@ -423,7 +431,10 @@ def check_sakura_api_status(send_to_slack=True):
                         mark_notification_as_sent(service_id, event_type_id, representative_event)
                     alert_found = True
                 else:
-                    print(f"    [スキップ] {event_type_name}通知は今日既に送信済み")
+                    if event_type_id == 'trouble':
+                        print(f"    [スキップ] {event_type_name}通知はこの時間帯に送信済み")
+                    else:
+                        print(f"    [スキップ] {event_type_name}通知は今日既に送信済み")
             else:
                 print(f"    [結果] {event_type_name}: 今日以降のイベントなし")
     
