@@ -326,6 +326,13 @@ def is_event_relevant(event_data, event_type):
         if not event_start_str:
             return False
             
+        # 石狩第2ゾーンのみのメンテナンス情報を除外（第1ゾーンも含む場合は通知）
+        title = event_data.get('title', '')
+        desc = event_data.get('desc', '')
+        if ('石狩第2ゾーン' in title or '石狩第2ゾーン' in desc) and ('石狩第1ゾーン' not in title and '石狩第1ゾーン' not in desc):
+            print(f"    [フィルタ] 石狩第2ゾーンのみのため除外: {title[:50]}...")
+            return False
+            
         # UNIXタイムスタンプの場合（文字列が数字のみ）
         if event_start_str.isdigit():
             event_start = datetime.fromtimestamp(int(event_start_str), tz=timezone.utc)
