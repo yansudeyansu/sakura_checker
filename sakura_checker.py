@@ -326,11 +326,18 @@ def is_event_relevant(event_data, event_type):
         if not event_start_str:
             return False
             
-        # 石狩第2ゾーンのみのメンテナンス情報を除外（第1ゾーンも含む場合は通知）
+        # 使用していないゾーンのメンテナンス情報を除外
         title = event_data.get('title', '')
         desc = event_data.get('desc', '')
+        
+        # 石狩第2ゾーンのみのメンテナンス情報を除外（第1ゾーンも含む場合は通知）
         if ('石狩第2ゾーン' in title or '石狩第2ゾーン' in desc) and ('石狩第1ゾーン' not in title and '石狩第1ゾーン' not in desc):
             print(f"    [フィルタ] 石狩第2ゾーンのみのため除外: {title[:50]}...")
+            return False
+            
+        # 東京ゾーンのみのメンテナンス情報を除外（石狩第1ゾーンも含む場合は通知）
+        if ('東京第1ゾーン' in title or '東京第1ゾーン' in desc or '東京第2ゾーン' in title or '東京第2ゾーン' in desc) and ('石狩第1ゾーン' not in title and '石狩第1ゾーン' not in desc):
+            print(f"    [フィルタ] 東京ゾーンのみのため除外: {title[:50]}...")
             return False
             
         # UNIXタイムスタンプの場合（文字列が数字のみ）
