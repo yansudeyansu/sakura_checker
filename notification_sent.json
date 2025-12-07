@@ -1,24 +1,4 @@
 {
-  "cloud_maint_20251130_001854": "f4e7290af97cab55",
-  "cloud_trouble_20251130_001856": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_012408": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_021703": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_032755": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_041532": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_052136": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_061732": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_071840": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_081826": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_104926": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_122712": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_133357": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_142001": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_153031": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_161755": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_172439": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_181853": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_191931": "08e8676f95a95b1d",
-  "cloud_trouble_20251130_201543": "08e8676f95a95b1d",
   "cloud_maint_20251202_162313": "4700a9c4943c199e",
   "cloud_maint_20251203_002540": "03f90b6c3f8f3a0d",
   "cloud_maint_20251204_002538": "a66cb3d801fc4ae4",
@@ -52,5 +32,6 @@
   "cloud_trouble_20251205_223332": "e462a04e19f596b6",
   "cloud_trouble_20251205_232240": "e462a04e19f596b6",
   "cloud_maint_20251206_002314": "c1035a4f908ab70a",
-  "cloud_maint_20251207_001903": "c1035a4f908ab70a"
+  "cloud_maint_20251207_001903": "c1035a4f908ab70a",
+  "cloud_maint_20251208_001832": "c1035a4f908ab70a"
 }
