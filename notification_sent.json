@@ -1,8 +1,4 @@
 {
-  "iot_maint_20261114_041802": "96da8cef2cf22a10",
-  "cloud_maint_20261114_041804": "fbdfa0427281a7e5",
-  "cloud_trouble_20261114_041805": "c4aea05ee24bd5fd",
-  "cloud_trouble_20261114_094254": "c4aea05ee24bd5fd",
   "iot_maint_20261115_044537": "96da8cef2cf22a10",
   "cloud_maint_20261115_044539": "fbdfa0427281a7e5",
   "iot_maint_20261116_043516": "96da8cef2cf22a10",
@@ -21,5 +17,7 @@
   "iot_maint_20261121_023502": "96da8cef2cf22a10",
   "cloud_maint_20261121_023505": "f19b1182d82b95a0",
   "cloud_trouble_20261121_023506": "1ae6a4c8fc243d14",
-  "cloud_trouble_20261121_084409": "1ae6a4c8fc243d14"
+  "cloud_trouble_20261121_084409": "1ae6a4c8fc243d14",
+  "iot_maint_20261122_054644": "96da8cef2cf22a10",
+  "cloud_maint_20261122_054646": "f19b1182d82b95a0"
 }
